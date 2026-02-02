@@ -9,6 +9,38 @@ resource "helm_release" "nvidia_device_plugin" {
   version    = "0.15.0"
 }
 
+# Gateway API CRDs - required for ALB Controller Gateway API support
+# Using null_resource to apply multi-document YAML via kubectl
+resource "null_resource" "gateway_api_crds" {
+  provisioner "local-exec" {
+    command = <<-EOT
+      aws eks update-kubeconfig --name ${local.cluster_name} --region ${local.region}
+      kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.3.0/standard-install.yaml
+    EOT
+  }
+
+  depends_on = [module.open-webui-eks]
+  
+  triggers = {
+    cluster_name = local.cluster_name
+  }
+}
+
+# LBC-specific Gateway API CRDs (consolidated in v3.0.0+)
+resource "null_resource" "lbc_gateway_crds" {
+  provisioner "local-exec" {
+    command = <<-EOT
+      aws eks update-kubeconfig --name ${local.cluster_name} --region ${local.region}
+      kubectl apply -f https://raw.githubusercontent.com/kubernetes-sigs/aws-load-balancer-controller/refs/heads/main/config/crd/gateway/gateway-crds.yaml
+    EOT
+  }
+
+  depends_on = [module.open-webui-eks, null_resource.gateway_api_crds]
+  
+  triggers = {
+    cluster_name = local.cluster_name
+  }
+}
 
 # ALB ingress controller
 resource "helm_release" "aws_load_balancer_controller" {
@@ -16,32 +48,17 @@ resource "helm_release" "aws_load_balancer_controller" {
   repository = "https://aws.github.io/eks-charts"
   chart      = "aws-load-balancer-controller"
   namespace  = "kube-system"
-  version    = "1.7.2"
+  version    = "3.0.0"
   atomic     = true
-  depends_on = [module.open-webui-eks]
+  depends_on = [module.open-webui-eks, null_resource.gateway_api_crds, null_resource.lbc_gateway_crds]
 
-  set = [{
-    name  = "clusterName"
-    value = local.cluster_name
-    },
-
-    {
-      name  = "serviceAccount.create"
-      value = "true"
-    },
-
-    {
-      name  = "serviceAccount.name"
-      value = "aws-load-balancer-controller"
-    },
-    {
-      name  = "region"
-      value = local.region
-    },
-    {
-      name  = "vpcId"
-      value = module.vpc.vpc_id
-    }
+  values = [
+    templatefile("${path.module}/alb-controller-values.yaml", {
+      cluster_name = local.cluster_name
+      role_arn     = aws_iam_role.aws_load_balancer_controller.arn
+      region       = local.region
+      vpc_id       = module.vpc.vpc_id
+    })
   ]
 }
 
@@ -52,6 +69,54 @@ resource "helm_release" "external_dns" {
   chart      = "external-dns"
   namespace  = "kube-system"
   depends_on = [module.open-webui-eks]
+
+  set = [
+    {
+      name  = "provider"
+      value = "aws"
+    },
+    {
+      name  = "domainFilters[0]"
+      value = local.domain_name
+    },
+    {
+      name  = "policy"
+      value = "sync"
+    },
+    {
+      name  = "registry"
+      value = "txt"
+    },
+    {
+      name  = "txtOwnerId"
+      value = local.hosted_zone_id
+    },
+    {
+      name  = "serviceAccount.create"
+      value = "true"
+    },
+    {
+      name  = "serviceAccount.name"
+      value = "external-dns"
+    },
+    {
+      name  = "serviceAccount.annotations.eks\\.amazonaws\\.com/role-arn"
+      value = aws_iam_role.external_dns.arn
+    },
+    # Enable Gateway API HTTPRoute as a source for DNS records
+    {
+      name  = "sources[0]"
+      value = "service"
+    },
+    {
+      name  = "sources[1]"
+      value = "ingress"
+    },
+    {
+      name  = "sources[2]"
+      value = "gateway-httproute"
+    }
+  ]
 }
 
 resource "helm_release" "ollama_small_chat" {
@@ -114,19 +179,19 @@ resource "helm_release" "open_webui" {
     },
 
     {
-      name = "persistence.enabled"
+      name  = "persistence.enabled"
       value = "false"
     },
 
-        {
-      name = "pipelines.persistence.enabled"
+    {
+      name  = "pipelines.persistence.enabled"
       value = "false"
     },
 
-    # set {
+    # {
     #   name  = "image.tag"
     #   value = "v0.1.124"
-    # }
+    # },
 
     # {
     #   name  = "persistence.size"
@@ -135,10 +200,10 @@ resource "helm_release" "open_webui" {
 
     # Optional - uncomment if using GP3 storage, requires a separate StorageClass to be deployed
     # Read more here: https://aws.amazon.com/blogs/containers/migrating-amazon-eks-clusters-from-gp2-to-gp3-ebs-volumes/
-    # set {
+    # {
     #   name = "persistence.storageClass"
     #   value = "gp3"
-    # }
+    # },
 
     # Set ingress on Open WebUI to provision access through AWS ALB
     {
@@ -185,5 +250,6 @@ resource "helm_release" "open_webui" {
     {
       name  = "ingress.annotations.alb\\.ingress\\.kubernetes\\.io/certificate-arn"
       value = aws_acm_certificate.webui.arn
-  }]
+    }
+  ]
 }
