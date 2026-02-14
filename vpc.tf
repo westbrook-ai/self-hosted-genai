@@ -45,40 +45,11 @@ resource "aws_security_group" "open-webui-ingress-sg" {
   }
 }
 
-# Creates an ACM cert for use on the ALB (Ingress)
 data "aws_route53_zone" "webui" {
   name         = local.domain_name
   private_zone = false
 }
 
-resource "aws_acm_certificate" "webui" {
-  domain_name       = local.gateway_fqdn
-  validation_method = "DNS"
-
-  lifecycle {
-    create_before_destroy = true
-  }
-}
-
-# This resource creates the required record for the ACM cert validation in your selected domain
-resource "aws_route53_record" "webui-validation" {
-  for_each = {
-    for dvo in aws_acm_certificate.webui.domain_validation_options : dvo.domain_name => {
-      name   = dvo.resource_record_name
-      record = dvo.resource_record_value
-      type   = dvo.resource_record_type
-    }
-  }
-
-  allow_overwrite = true
-  name            = each.value.name
-  records         = [each.value.record]
-  ttl             = 60
-  type            = each.value.type
-  zone_id         = data.aws_route53_zone.webui.zone_id
-}
-
-# Creates an ACM cert for Gateway API testing
 resource "aws_acm_certificate" "gateway" {
   domain_name       = local.gateway_fqdn
   validation_method = "DNS"

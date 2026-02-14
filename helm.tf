@@ -193,6 +193,18 @@ resource "helm_release" "open_webui" {
     },
 
     {
+      name  = "persistence.size"
+      value = local.openwebui_pvc_size
+    },
+
+    # Optional - uncomment if using GP3 storage, requires a separate StorageClass to be deployed
+    # Read more here: https://aws.amazon.com/blogs/containers/migrating-amazon-eks-clusters-from-gp2-to-gp3-ebs-volumes/
+    # {
+    #   name = "persistence.storageClass"
+    #   value = "gp3"
+    # },
+
+    {
       name  = "pipelines.enabled"
       value = "true"
     },
