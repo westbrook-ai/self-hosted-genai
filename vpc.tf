@@ -52,7 +52,7 @@ data "aws_route53_zone" "webui" {
 }
 
 resource "aws_acm_certificate" "webui" {
-  domain_name       = "${local.public_hostname}.${local.domain_name}"
+  domain_name       = local.gateway_fqdn
   validation_method = "DNS"
 
   lifecycle {
