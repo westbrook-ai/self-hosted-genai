@@ -1,5 +1,4 @@
-# Gateway API resources for Open WebUI
-# This provides an alternative to the existing Ingress-based approach using the newer Gateway API
+# Gateway API resources for Open WebUI - CRDs must be added before
 
 # GatewayClass defines the ALB controller as the implementation
 resource "kubectl_manifest" "gateway_class" {
@@ -11,15 +10,8 @@ resource "kubectl_manifest" "gateway_class" {
     spec:
       controllerName: gateway.k8s.aws/alb
   YAML
-
-  depends_on = [
-    helm_release.aws_load_balancer_controller,
-    null_resource.gateway_api_crds,
-    null_resource.lbc_gateway_crds
-  ]
 }
 
-# LoadBalancerConfiguration defines ALB-specific settings (replaces Ingress annotations)
 resource "kubectl_manifest" "open_webui_lb_config" {
   yaml_body = <<-YAML
     apiVersion: gateway.k8s.aws/v1beta1
@@ -44,7 +36,6 @@ resource "kubectl_manifest" "open_webui_lb_config" {
   ]
 }
 
-# TargetGroupConfiguration defines how traffic is routed to pods
 resource "kubectl_manifest" "open_webui_tg_config" {
   yaml_body = <<-YAML
     apiVersion: gateway.k8s.aws/v1beta1
@@ -66,7 +57,6 @@ resource "kubectl_manifest" "open_webui_tg_config" {
   ]
 }
 
-# Gateway resource (replaces Ingress) - creates the ALB
 resource "kubectl_manifest" "open_webui_gateway" {
   yaml_body = <<-YAML
     apiVersion: gateway.networking.k8s.io/v1
@@ -75,7 +65,6 @@ resource "kubectl_manifest" "open_webui_gateway" {
       name: open-webui-gateway
       namespace: genai
       annotations:
-        # External DNS will create DNS record for this hostname
         external-dns.alpha.kubernetes.io/hostname: "${local.gateway_fqdn}"
     spec:
       gatewayClassName: aws-alb
@@ -100,5 +89,4 @@ resource "kubectl_manifest" "open_webui_gateway" {
   ]
 }
 
-# HTTPRoute is now managed by the Open WebUI Helm chart when route.enabled=true
-# See test-gateway-values.yaml for the configuration used during testing
+

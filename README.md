@@ -43,7 +43,7 @@ Once initialized, you can build the resources:
 
 If your setup is correct, you should see the following:
 ```
-Plan: 97 to add, 0 to change, 0 to destroy.
+Plan: 99 to add, 0 to change, 0 to destroy.
 
 Do you want to perform these actions?
   OpenTofu will perform the actions described above.

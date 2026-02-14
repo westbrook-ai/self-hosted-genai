@@ -10,7 +10,6 @@ resource "helm_release" "nvidia_device_plugin" {
 }
 
 # Gateway API CRDs - required for ALB Controller Gateway API support
-# Using null_resource to apply multi-document YAML via kubectl
 resource "null_resource" "gateway_api_crds" {
   provisioner "local-exec" {
     command = <<-EOT
@@ -26,23 +25,6 @@ resource "null_resource" "gateway_api_crds" {
   }
 }
 
-# LBC-specific Gateway API CRDs (consolidated in v3.0.0+)
-resource "null_resource" "lbc_gateway_crds" {
-  provisioner "local-exec" {
-    command = <<-EOT
-      aws eks update-kubeconfig --name ${local.cluster_name} --region ${local.region}
-      kubectl apply -f https://raw.githubusercontent.com/kubernetes-sigs/aws-load-balancer-controller/refs/heads/main/config/crd/gateway/gateway-crds.yaml
-    EOT
-  }
-
-  depends_on = [module.open-webui-eks, null_resource.gateway_api_crds]
-  
-  triggers = {
-    cluster_name = local.cluster_name
-  }
-}
-
-# ALB ingress controller
 resource "helm_release" "aws_load_balancer_controller" {
   name       = "aws-load-balancer-controller"
   repository = "https://aws.github.io/eks-charts"
@@ -50,7 +32,7 @@ resource "helm_release" "aws_load_balancer_controller" {
   namespace  = "kube-system"
   version    = "3.0.0"
   atomic     = true
-  depends_on = [module.open-webui-eks, null_resource.gateway_api_crds, null_resource.lbc_gateway_crds]
+  depends_on = [module.open-webui-eks, null_resource.gateway_api_crds]
 
   set = [
     {
@@ -115,7 +97,7 @@ resource "helm_release" "external_dns" {
     },
     {
       name  = "txtOwnerId"
-      value = local.hosted_zone_id
+      value = data.aws_route53_zone.webui.zone_id
     },
     {
       name  = "serviceAccount.create"
@@ -185,7 +167,6 @@ resource "helm_release" "open_webui" {
   create_namespace = true
   version          = "12.0.1"
 
-  # Sets the names of the Ollama services for Open WebUI to use 
   set_list = [
     {
       name  = "ollamaUrls"
@@ -197,13 +178,10 @@ resource "helm_release" "open_webui" {
     }
   ]
 
-  # Disable the built-in Ollama deployment since we have multiple backends
   set = [{
     name  = "ollama.enabled"
     value = false
     },
-
-    # Image takes a while to pull which slows down startup, so only pull if the image isn't present
     {
       name  = "image.pullPolicy"
       value = "IfNotPresent"
@@ -224,64 +202,52 @@ resource "helm_release" "open_webui" {
       value = "false"
     },
 
-    # Disable traditional Ingress (using Gateway API instead)
     {
       name  = "ingress.enabled"
       value = "false"
     },
 
-    # Enable Gateway API HTTPRoute
+    # Gateway API HTTPRoute
     {
       name  = "route.enabled"
       value = "true"
     },
-
     {
       name  = "route.apiVersion"
       value = "gateway.networking.k8s.io/v1"
     },
-
     {
       name  = "route.kind"
       value = "HTTPRoute"
     },
-
-    # Annotations for External DNS to create Route53 records
     {
       name  = "route.annotations.external-dns\\.alpha\\.kubernetes\\.io/hostname"
       value = local.gateway_fqdn
     },
 
-    # Reference the existing Gateway created by Terraform
+    # Parent gateway reference
     {
       name  = "route.parentRefs[0].name"
       value = "open-webui-gateway"
     },
-
     {
       name  = "route.parentRefs[0].namespace"
       value = "genai"
     },
-
     {
       name  = "route.parentRefs[0].sectionName"
       value = "https"
     },
 
-    # Path matching rules
-    # NOTE: Open WebUI frontend uses absolute paths and does not support path prefixes
-    # Must be deployed at root (/) or frontend assets will fail to load
+    # Must be deployed at root - Open WebUI uses absolute paths for frontend assets
     {
       name  = "route.matches[0].path.type"
       value = "PathPrefix"
     },
-
     {
       name  = "route.matches[0].path.value"
       value = "/"
     },
-
-    # No HTTP redirect needed - Gateway only has HTTPS listener
     {
       name  = "route.httpsRedirect"
       value = "false"

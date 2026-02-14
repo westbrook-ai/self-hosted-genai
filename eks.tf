@@ -1,4 +1,4 @@
-# Gets the latest AWS EKS AMI with GPU support for AL2023
+# Latest AL2023 GPU-enabled EKS AMI
 data "aws_ami" "eks_gpu_ami" {
   most_recent = true
   owners      = ["amazon"]
@@ -24,7 +24,7 @@ data "aws_ami" "eks_gpu_ami" {
   }
 }
 
-# Gets the latest regular AWS EKS AMI for AL2023
+# Latest AL2023 standard EKS AMI
 data "aws_ami" "eks_al2023_ami" {
   most_recent = true
   owners      = ["amazon"]
@@ -80,7 +80,6 @@ module "open-webui-eks" {
     }
   }
 
-  # Networking
   vpc_id                   = module.vpc.vpc_id
   subnet_ids               = module.vpc.private_subnets
   control_plane_subnet_ids = module.vpc.private_subnets
@@ -98,21 +97,17 @@ module "open-webui-eks" {
     }
   }
 
-  # EKS Managed Node Groups 
   eks_managed_node_groups = {
     open-webui = {
-      # Number of instances to deploy
       min_size     = 1
       max_size     = 1
       desired_size = 1
 
-      # AMI and instance type
       ami_id         = data.aws_ami.eks_al2023_ami.id
       ami_type       = "AL2023_x86_64_STANDARD"
       instance_types = ["m5a.large"]
       capacity_type  = "ON_DEMAND"
 
-      # REQUIRED: Enable bootstrap user data for custom AMI with AL2023
       enable_bootstrap_user_data = true
 
       # Adds a disk large enough to store user data and files uploaded for RAG 
@@ -148,21 +143,17 @@ module "open-webui-eks" {
     }
 
     ollama-small = {
-      # Number of instances to deploy
       min_size     = 1
       max_size     = 1
       desired_size = 1
 
-      # AMI and instance type
       ami_id         = data.aws_ami.eks_gpu_ami.id
       ami_type       = "AL2023_x86_64_STANDARD"
       instance_types = ["g5.xlarge"]
       capacity_type  = "ON_DEMAND"
 
-      # REQUIRED: Enable bootstrap user data for custom AMI with AL2023
       enable_bootstrap_user_data = true
 
-      # Adds IAM permissions to node role
       create_iam_role = true
       iam_role_name   = "ollama-small-eks-node-group"
       iam_role_additional_policies = {
@@ -195,6 +186,5 @@ module "open-webui-eks" {
     }
   }
 
-  # To add the current caller identity as an administrator
   enable_cluster_creator_admin_permissions = true
 }
