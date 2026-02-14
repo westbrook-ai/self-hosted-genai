@@ -9,30 +9,47 @@ resource "helm_release" "nvidia_device_plugin" {
   version    = "0.15.0"
 }
 
+# Gateway API CRDs - required for ALB Controller Gateway API support
+resource "null_resource" "gateway_api_crds" {
+  provisioner "local-exec" {
+    command = <<-EOT
+      aws eks update-kubeconfig --name ${local.cluster_name} --region ${local.region}
+      kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.3.0/standard-install.yaml
+    EOT
+  }
 
-# ALB ingress controller
+  depends_on = [module.open-webui-eks]
+  
+  triggers = {
+    cluster_name = local.cluster_name
+  }
+}
+
 resource "helm_release" "aws_load_balancer_controller" {
   name       = "aws-load-balancer-controller"
   repository = "https://aws.github.io/eks-charts"
   chart      = "aws-load-balancer-controller"
   namespace  = "kube-system"
-  version    = "1.7.2"
+  version    = "3.0.0"
   atomic     = true
-  depends_on = [module.open-webui-eks]
+  depends_on = [module.open-webui-eks, null_resource.gateway_api_crds]
 
-  set = [{
-    name  = "clusterName"
-    value = local.cluster_name
+  set = [
+    {
+      name  = "clusterName"
+      value = local.cluster_name
     },
-
     {
       name  = "serviceAccount.create"
       value = "true"
     },
-
     {
       name  = "serviceAccount.name"
       value = "aws-load-balancer-controller"
+    },
+    {
+      name  = "serviceAccount.annotations.eks\\.amazonaws\\.com/role-arn"
+      value = aws_iam_role.aws_load_balancer_controller.arn
     },
     {
       name  = "region"
@@ -41,6 +58,14 @@ resource "helm_release" "aws_load_balancer_controller" {
     {
       name  = "vpcId"
       value = module.vpc.vpc_id
+    },
+    {
+      name  = "controllerConfig.featureGates.ALBGatewayAPI"
+      value = "true"
+    },
+    {
+      name  = "controllerConfig.featureGates.NLBGatewayAPI"
+      value = "true"
     }
   ]
 }
@@ -52,6 +77,54 @@ resource "helm_release" "external_dns" {
   chart      = "external-dns"
   namespace  = "kube-system"
   depends_on = [module.open-webui-eks]
+
+  set = [
+    {
+      name  = "provider"
+      value = "aws"
+    },
+    {
+      name  = "domainFilters[0]"
+      value = local.domain_name
+    },
+    {
+      name  = "policy"
+      value = "sync"
+    },
+    {
+      name  = "registry"
+      value = "txt"
+    },
+    {
+      name  = "txtOwnerId"
+      value = data.aws_route53_zone.webui.zone_id
+    },
+    {
+      name  = "serviceAccount.create"
+      value = "true"
+    },
+    {
+      name  = "serviceAccount.name"
+      value = "external-dns"
+    },
+    {
+      name  = "serviceAccount.annotations.eks\\.amazonaws\\.com/role-arn"
+      value = aws_iam_role.external_dns.arn
+    },
+    # Enable Gateway API HTTPRoute as a source for DNS records
+    {
+      name  = "sources[0]"
+      value = "service"
+    },
+    {
+      name  = "sources[1]"
+      value = "ingress"
+    },
+    {
+      name  = "sources[2]"
+      value = "gateway-httproute"
+    }
+  ]
 }
 
 resource "helm_release" "ollama_small_chat" {
@@ -61,7 +134,7 @@ resource "helm_release" "ollama_small_chat" {
   repository       = "https://otwld.github.io/ollama-helm"
   chart            = "ollama"
   namespace        = "genai"
-  version          = "1.31.0"
+  version          = "1.42.0"
   create_namespace = true
 
   # Models to load on Ollama on startup
@@ -92,98 +165,104 @@ resource "helm_release" "open_webui" {
   chart            = "open-webui"
   namespace        = "genai"
   create_namespace = true
-  version          = "8.1.0"
+  version          = "12.0.1"
 
-  # Sets the names of the Ollama services for Open WebUI to use 
   set_list = [
     {
       name  = "ollamaUrls"
       value = ["http://ollama-small-chat.genai.svc.cluster.local:11434"]
-  }]
+    },
+    {
+      name  = "route.hostnames"
+      value = [local.gateway_fqdn]
+    }
+  ]
 
-  # Disable the built-in Ollama deployment since we have multiple backends
   set = [{
     name  = "ollama.enabled"
     value = false
     },
-
-    # Image takes a while to pull which slows down startup, so only pull if the image isn't present
     {
       name  = "image.pullPolicy"
       value = "IfNotPresent"
     },
 
     {
-      name = "persistence.enabled"
+      name  = "persistence.enabled"
       value = "false"
     },
 
-        {
-      name = "pipelines.persistence.enabled"
-      value = "false"
+    {
+      name  = "persistence.size"
+      value = local.openwebui_pvc_size
     },
-
-    # set {
-    #   name  = "image.tag"
-    #   value = "v0.1.124"
-    # }
-
-    # {
-    #   name  = "persistence.size"
-    #   value = local.openwebui_pvc_size
-    # },
 
     # Optional - uncomment if using GP3 storage, requires a separate StorageClass to be deployed
     # Read more here: https://aws.amazon.com/blogs/containers/migrating-amazon-eks-clusters-from-gp2-to-gp3-ebs-volumes/
-    # set {
+    # {
     #   name = "persistence.storageClass"
     #   value = "gp3"
-    # }
+    # },
 
-    # Set ingress on Open WebUI to provision access through AWS ALB
     {
-      name  = "ingress.enabled"
+      name  = "pipelines.enabled"
       value = "true"
     },
 
-    # Sets the external FQDN of the WebUI
     {
-      name  = "ingress.annotations.external-dns\\.alpha\\.kubernetes\\.io/hostname"
-      value = local.fqdn
+      name  = "pipelines.persistence.enabled"
+      value = "false"
     },
 
     {
-      name  = "ingress.annotations.alb\\.ingress\\.kubernetes\\.io/load-balancer-name"
-      value = "open-webui-alb"
+      name  = "ingress.enabled"
+      value = "false"
     },
 
+    # Gateway API HTTPRoute
     {
-      name  = "ingress.annotations.kubernetes\\.io/ingress\\.class"
-      value = "alb"
+      name  = "route.enabled"
+      value = "true"
+    },
+    {
+      name  = "route.apiVersion"
+      value = "gateway.networking.k8s.io/v1"
+    },
+    {
+      name  = "route.kind"
+      value = "HTTPRoute"
+    },
+    {
+      name  = "route.annotations.external-dns\\.alpha\\.kubernetes\\.io/hostname"
+      value = local.gateway_fqdn
     },
 
+    # Parent gateway reference
     {
-      name  = "ingress.annotations.alb\\.ingress\\.kubernetes\\.io/target-type"
-      value = "ip"
+      name  = "route.parentRefs[0].name"
+      value = "open-webui-gateway"
+    },
+    {
+      name  = "route.parentRefs[0].namespace"
+      value = "genai"
+    },
+    {
+      name  = "route.parentRefs[0].sectionName"
+      value = "https"
     },
 
+    # Must be deployed at root - Open WebUI uses absolute paths for frontend assets
     {
-      name  = "ingress.annotations.alb\\.ingress\\.kubernetes\\.io/scheme"
-      value = "internet-facing"
+      name  = "route.matches[0].path.type"
+      value = "PathPrefix"
     },
-
     {
-      name  = "ingress.annotations.alb\\.ingress\\.kubernetes\\.io/security-groups"
-      value = aws_security_group.open-webui-ingress-sg.id
+      name  = "route.matches[0].path.value"
+      value = "/"
     },
-
     {
-      name  = "ingress.annotations.alb\\.ingress\\.kubernetes\\.io/listen-ports"
-      value = jsonencode([{ "HTTPS" : 443 }])
-    },
-
-    {
-      name  = "ingress.annotations.alb\\.ingress\\.kubernetes\\.io/certificate-arn"
-      value = aws_acm_certificate.webui.arn
-  }]
+      name  = "route.httpsRedirect"
+      value = "false"
+    }
+  ]
 }
