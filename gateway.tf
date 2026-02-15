@@ -10,6 +10,9 @@ resource "kubectl_manifest" "gateway_class" {
     spec:
       controllerName: gateway.k8s.aws/alb
   YAML
+  depends_on = [
+    helm_release.aws_load_balancer_controller
+  ]
 }
 
 resource "kubectl_manifest" "open_webui_lb_config" {
