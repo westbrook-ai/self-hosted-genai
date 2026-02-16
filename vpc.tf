@@ -2,7 +2,7 @@
 module "vpc" {
   source = "terraform-aws-modules/vpc/aws"
 
-  name = "ollama-vpc"
+  name = local.vpc_name
   cidr = "10.10.0.0/16"
 
   azs             = ["${local.region}a", "${local.region}b", "${local.region}c"]

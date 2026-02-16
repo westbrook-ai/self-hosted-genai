@@ -7,9 +7,45 @@ resource "helm_release" "nvidia_device_plugin" {
   chart      = "nvidia-device-plugin"
   namespace  = "kube-system"
   version    = "0.15.0"
+
+  set = [
+    {
+      name  = "affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms[0].matchExpressions[0].key"
+      value = "workload"
+    },
+    {
+      name  = "affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms[0].matchExpressions[0].operator"
+      value = "In"
+    },
+    {
+      name  = "affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms[0].matchExpressions[0].values[0]"
+      value = "gpu"
+    },
+
+    # Toleration to allow scheduling on tainted GPU nodes
+    {
+      name  = "tolerations[0].key"
+      value = "nvidia.com/gpu"
+    },
+    {
+      name  = "tolerations[0].operator"
+      value = "Equal"
+    },
+    {
+      name  = "tolerations[0].value"
+      value = "true"
+      type  = "string"
+    },
+    {
+      name  = "tolerations[0].effect"
+      value = "NoSchedule"
+    }
+  ]
 }
 
 # Gateway API CRDs - required for ALB Controller Gateway API support
+# Using null_resource because the gateway-api project does not publish a Helm chart;
+# CRDs are distributed as raw YAML from GitHub releases.
 resource "null_resource" "gateway_api_crds" {
   provisioner "local-exec" {
     command = <<-EOT
@@ -18,8 +54,13 @@ resource "null_resource" "gateway_api_crds" {
     EOT
   }
 
+  provisioner "local-exec" {
+    when    = destroy
+    command = "kubectl delete -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.3.0/standard-install.yaml --ignore-not-found"
+  }
+
   depends_on = [module.open-webui-eks]
-  
+
   triggers = {
     cluster_name = local.cluster_name
   }
@@ -65,7 +106,11 @@ resource "helm_release" "aws_load_balancer_controller" {
     },
     {
       name  = "controllerConfig.featureGates.NLBGatewayAPI"
-      value = "true"
+      value = "false"
+    },
+    {
+      name  = "nodeSelector.workload"
+      value = "general"
     }
   ]
 }
@@ -123,6 +168,10 @@ resource "helm_release" "external_dns" {
     {
       name  = "sources[2]"
       value = "gateway-httproute"
+    },
+    {
+      name  = "nodeSelector.workload"
+      value = "general"
     }
   ]
 }
@@ -143,16 +192,57 @@ resource "helm_release" "ollama_small_chat" {
     value = local.chat_models
   }]
 
-  # Enables Ollama to answer multiple requests concurrently
+  # Scale to 0 replicas while vLLM is active
   set = [{
-    name  = "ollama.extraEnv.OLLAMA_NUM_PARALLEL"
-    value = 10
+    name  = "replicaCount"
+    value = 0
+    },
+
+    # Enables Ollama to answer multiple requests concurrently
+    {
+      name  = "ollama.extraEnv.OLLAMA_NUM_PARALLEL"
+      value = 10
     },
 
     # Keeps models loaded in Ollama to prevent load delay
     {
       name  = "ollama.extraEnv.KEEP_ALIVE"
       value = "-1"
+    },
+
+    # Node selector to ensure Ollama runs on GPU nodes only
+    {
+      name  = "nodeSelector.workload"
+      value = "gpu"
+    },
+
+    # GPU resource request
+    {
+      name  = "ollama.gpu.enabled"
+      value = "true"
+    },
+    {
+      name  = "ollama.gpu.number"
+      value = 1
+    },
+
+    # Toleration to allow scheduling on tainted GPU nodes
+    {
+      name  = "tolerations[0].key"
+      value = "nvidia.com/gpu"
+    },
+    {
+      name  = "tolerations[0].operator"
+      value = "Equal"
+    },
+    {
+      name  = "tolerations[0].value"
+      value = "true"
+      type  = "string"
+    },
+    {
+      name  = "tolerations[0].effect"
+      value = "NoSchedule"
     }
   ]
 }
@@ -171,6 +261,14 @@ resource "helm_release" "open_webui" {
     {
       name  = "ollamaUrls"
       value = ["http://ollama-small-chat.genai.svc.cluster.local:11434"]
+    },
+    {
+      name  = "openaiBaseApiUrls"
+      value = ["http://vllm-tool-router-service.genai.svc.cluster.local/v1"]
+    },
+    {
+      name  = "openaiApiKeys"
+      value = ["not-needed"]
     },
     {
       name  = "route.hostnames"
@@ -263,6 +361,24 @@ resource "helm_release" "open_webui" {
     {
       name  = "route.httpsRedirect"
       value = "false"
+    },
+
+    # Node selector to ensure Open WebUI runs on non-GPU nodes only
+    {
+      name  = "nodeSelector.workload"
+      value = "general"
+    },
+
+    # Pipelines node selector
+    {
+      name  = "pipelines.nodeSelector.workload"
+      value = "general"
+    },
+
+    # Redis node selector
+    {
+      name  = "redis.nodeSelector.workload"
+      value = "general"
     }
   ]
 }

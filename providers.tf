@@ -1,6 +1,6 @@
 provider "aws" {
   profile = "default"
-  region  = "us-west-2"
+  region  = local.region
 }
 
 provider "helm" {
