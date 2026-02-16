@@ -1,25 +1,5 @@
 data "aws_caller_identity" "current" {}
 
-# EBS CSI Driver IAM Policy
-data "aws_iam_policy_document" "ebs_csi_driver_policy" {
-  statement {
-    actions   = ["ec2:AttachVolume", "ec2:DetachVolume", "ec2:DescribeAvailabilityZones"]
-    resources = ["*"]
-  }
-
-  statement {
-    actions   = ["ec2:ModifyVolume", "ec2:CreateSnapshot", "ec2:CreateTags", "ec2:CreateVolume", "ec2:DeleteSnapshot", "ec2:DeleteTags", "ec2:DeleteVolume", "ec2:DescribeInstances", "ec2:DescribeSnapshots", "ec2:DescribeTags", "ec2:DescribeVolumes", "ec2:DescribeVolumesModifications"]
-    resources = ["*"]
-  }
-}
-
-resource "aws_iam_policy" "ebs_csi_driver_policy" {
-  name        = "AmazonEBSCSIDriverPolicy"
-  path        = "/"
-  description = "Policy for the Amazon EBS CSI driver"
-  policy      = data.aws_iam_policy_document.ebs_csi_driver_policy.json
-}
-
 # EBS CSI Driver IAM Role
 data "aws_iam_policy_document" "ebs_csi_driver_role" {
   statement {
@@ -40,9 +20,13 @@ data "aws_iam_policy_document" "ebs_csi_driver_role" {
 }
 
 resource "aws_iam_role" "ebs_csi_driver_role" {
-  name                = "AmazonEBSCSIDriverRole"
-  assume_role_policy  = data.aws_iam_policy_document.ebs_csi_driver_role.json
-  managed_policy_arns = [aws_iam_policy.ebs_csi_driver_policy.arn]
+  name               = "AmazonEBSCSIDriverRole"
+  assume_role_policy = data.aws_iam_policy_document.ebs_csi_driver_role.json
+}
+
+resource "aws_iam_role_policy_attachment" "ebs_csi_driver" {
+  role       = aws_iam_role.ebs_csi_driver_role.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonEBSCSIDriverPolicy"
 }
 
 # ALB Ingress Controller policy and role

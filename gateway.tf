@@ -35,7 +35,8 @@ resource "kubectl_manifest" "open_webui_lb_config" {
   depends_on = [
     kubectl_manifest.gateway_class,
     aws_acm_certificate_validation.gateway,
-    helm_release.open_webui
+    helm_release.open_webui,
+    helm_release.aws_load_balancer_controller
   ]
 }
 
@@ -56,7 +57,8 @@ resource "kubectl_manifest" "open_webui_tg_config" {
 
   depends_on = [
     kubectl_manifest.gateway_class,
-    helm_release.open_webui
+    helm_release.open_webui,
+    helm_release.aws_load_balancer_controller
   ]
 }
 
@@ -88,7 +90,8 @@ resource "kubectl_manifest" "open_webui_gateway" {
 
   depends_on = [
     kubectl_manifest.open_webui_lb_config,
-    kubectl_manifest.open_webui_tg_config
+    kubectl_manifest.open_webui_tg_config,
+    helm_release.aws_load_balancer_controller
   ]
 }
 

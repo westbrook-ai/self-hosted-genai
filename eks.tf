@@ -61,21 +61,17 @@ module "open-webui-eks" {
 
   addons = {
     coredns = {
-      most_recent       = true
-      resolve_conflicts = "OVERWRITE"
+      most_recent = true
     }
     kube-proxy = {
-      most_recent       = true
-      resolve_conflicts = "OVERWRITE"
+      most_recent = true
     }
     vpc-cni = {
-      before_compute    = true
-      most_recent       = true
-      resolve_conflicts = "OVERWRITE"
+      before_compute = true
+      most_recent    = true
     }
     aws-ebs-csi-driver = {
       most_recent              = true
-      resolve_conflicts        = "OVERWRITE"
       service_account_role_arn = aws_iam_role.ebs_csi_driver_role.arn
     }
   }
@@ -88,7 +84,7 @@ module "open-webui-eks" {
 
   node_security_group_additional_rules = {
     alb_ingress = {
-      description              = "Access from Ingress ALBs"
+      description              = "Access from Gateway ALB to Open WebUI on port 8080"
       protocol                 = "tcp"
       from_port                = 8080
       to_port                  = 8080
@@ -111,7 +107,6 @@ module "open-webui-eks" {
       enable_bootstrap_user_data = true
 
       # Adds a disk large enough to store user data and files uploaded for RAG 
-      disk_size = 100
       block_device_mappings = {
         xvda = {
           device_name = "/dev/xvda"
@@ -127,14 +122,12 @@ module "open-webui-eks" {
       create_iam_role = true
       iam_role_name   = "open-webui-eks-node-group"
       iam_role_additional_policies = {
-        AmazonALBIngressController   = aws_iam_policy.aws_load_balancer_controller.arn
         AmazonSSMManagedInstanceCore = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
-        AWSExternalDNS               = aws_iam_policy.external_dns.arn
       }
 
       # Adds Kubernetes labels used for pod placement 
-      node_group_labels = {
-        "app" = "open-webui"
+      labels = {
+        "workload" = "general"
       }
 
       tags = {
@@ -142,7 +135,7 @@ module "open-webui-eks" {
       }
     }
 
-    ollama-small = {
+    gpu-small = {
       min_size     = 1
       max_size     = 1
       desired_size = 1
@@ -155,20 +148,17 @@ module "open-webui-eks" {
       enable_bootstrap_user_data = true
 
       create_iam_role = true
-      iam_role_name   = "ollama-small-eks-node-group"
+      iam_role_name   = "gpu-small-eks-node-group"
       iam_role_additional_policies = {
-        AmazonALBIngressController   = aws_iam_policy.aws_load_balancer_controller.arn
         AmazonSSMManagedInstanceCore = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
-        AWSExternalDNS               = aws_iam_policy.external_dns.arn
       }
 
-      # Adds a disk large enough to store models
-      disk_size = 30
+      # Adds a disk large enough to store models and container images
       block_device_mappings = {
         xvda = {
           device_name = "/dev/xvda"
           ebs = {
-            volume_size           = 30
+            volume_size           = 100
             volume_type           = "gp2"
             delete_on_termination = true
           }
@@ -180,8 +170,17 @@ module "open-webui-eks" {
       }
 
       # Adds Kubernetes labels used for pod placement
-      node_group_labels = {
-        "app" = "ollama"
+      labels = {
+        "workload" = "gpu"
+      }
+
+      # Taint GPU nodes so only pods with matching tolerations are scheduled
+      taints = {
+        gpu = {
+          key    = "nvidia.com/gpu"
+          value  = "true"
+          effect = "NO_SCHEDULE"
+        }
       }
     }
   }
